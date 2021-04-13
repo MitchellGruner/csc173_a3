@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<head>
+<meta charset="utf-8">
+<script src="https://d3js.org/d3.v6.min.js"></script>
+<script src="https://d3js.org/d3-geo.v2.min.js"></script>
+<script src="https://unpkg.com/d3-simple-slider"></script>
+<style type="text/css">
+  .toolTipDiv {
+    position: absolute;
+    padding: 10px;
+    background-color: whitesmoke;
+    font-family: Arial, Helvetica, sans-serif;
+    text-align: start;
+  }
+
+  h1 {
+    text-align: center;
+    font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+  }
+
+  .mapDiv {
+    display: grid;
+    grid-template-columns: auto auto;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mapSvg {
+    grid-row: 1/2;
+    grid-column: 1/2;
+  }
+
+  path {
+    stroke-width: 1px;
+    stroke: slategrey;
+  }
+
+  .yearSliderDiv {
+    display: grid;
+    grid-row: 3/4;
+
+    align-items: center;
+    justify-content: center;
+    font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+    margin-top: 15px;
+
+    visibility: visible;
+  }
+
+  .yearSliderLabel {
+    display: grid;
+    grid-row: 4/5;
+
+    align-items: center;
+    justify-content: center;
+    font-size: x-large;
+    font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+
+    visibility: visible;
+  }
+
+  .colorLegendDiv {
+    display: grid;
+    grid-column: 2/3;
+    grid-template-columns: 25px 150px;
+    grid-template-rows: 25px 25px 25px;
+    grid-row-gap: 5px;
+    
+    font-family: 'arial';
+    background-color: whitesmoke;
+
+    padding: 15px 45px 15px 45px;
+    justify-self: center;
+
+    position: relative;
+    right: 150px;
+  }
+  
+  .colorLegendLabel {
+    grid-row: 1/2;
+    grid-column: 1/3;
+    text-align: center;
+    width: 100%;
+    font-weight: 600;
+  }
+
+  .redSwatch {
+    grid-column: 1/2;
+    grid-row: 2/3;
+  }
+  .redSwatchTxt {
+    grid-row: 2/3;
+    grid-column: 2/3;
+    align-self: flex-end;
+    justify-self: center;
+  }
+
+  .blueSwatch {
+    grid-column: 1/2;
+    grid-row: 3/4;
+  }
+  .blueSwatchTxt {
+    grid-column: 2/3;
+    grid-row: 3/4;
+    align-self: flex-end;
+    justify-self: center;
+  }
+
+  .opacityLegendDiv {
+    display: grid;
+    grid-column: 2/3;
+    grid-template-rows: min-content min-content;
+    column-gap: 10px;
+
+    font-family: 'arial';
+
+    justify-items: center;
+    position: relative;
+    right: 150px;
+    bottom: 275px;
+  }
+
+  .opacityDiv {
+    display: grid;
+    grid-template-rows: 10px 10px;
+  }
+
+  .redLegendCanvas{
+    grid-row: 1/2;
+  }
+  .blueLegendCanvas {
+    grid-row: 2/3;
+  }
+
+  .opacityLegendLabel {
+    grid-row: 3/4;
+    padding: 15px;
+
+    grid-template-rows: min-content min-content;
+    width: 250px;
+  }
+
+  .ratePoints {
+    display: grid;
+    grid-row: 1/2;
+    grid-template-columns: auto auto;
+  }
+
+  .ratePointLeft {
+    grid-column: 1/2;
+    justify-self: start;
+  }
+  .ratePointRight {
+    grid-column: 2/3;
+    justify-self: end;
+  }
+
+  .rateLabel {
+    grid-row: 2/3;
+    text-align: center;
+  }
+
+  .axis text,
+  .slider text {
+    font-size: 18px;
+  } 
+</style>
+</head>
+<body>
+<script type="text/javascript">
+  //title
+  const titleDiv = d3.select('body')
+    .append('h1')
+    .text('Early Voting Rates in US General Elections')
+
+  //Width and height of map
+  const width = 1280;
+  const height = 720;
+
+  // D3 Projection
+  const projection = d3.geoAlbersUsa()
+    .translate([width/2, height/2])    // translate to center of screen
+    .scale([1500]);          // scale things down so see entire US
+    
+  // Define path generator
+  const path = d3.geoPath(projection)
+
+  // div used to center map with flex
+  const mapDiv = d3.select('body')
+    .append('div')
+    .attr('class', 'mapDiv')
+    .on('click', clicked)
+
+  const colorLegendDiv = mapDiv.append('div').attr('class', 'colorLegendDiv')
+  colorLegendDiv.append('div').attr('class', 'colorLegendLabel').text(`Color Legend`)
+  colorLegendDiv.append('svg').attr('class', 'redSwatch').append('rect').attr('fill', 'rgb(255,0,0)').attr('width', '25px').attr('height', '25px')
+  colorLegendDiv.append('div').attr('class', 'redSwatchTxt').text('Republican Majority')
+
+  colorLegendDiv.append('svg').attr('class', 'blueSwatch').append('rect').attr('fill', 'rgb(0,0,255)').attr('width', '25px').attr('height', '25px')
+  colorLegendDiv.append('div').attr('class', 'blueSwatchTxt').text('Democratic Majority')
+
+
+  //Create SVG element and append map to the SVG
+  const mapSvg = mapDiv
+    .append("svg")
+    .attr('class', 'mapSvg')
+    .attr("width", width)
+    .attr("height", height);
+  
+  // used for color encoding
+  let min = Number.MAX_VALUE, max = Number.MIN_VALUE
+  let colorScale = [min, max]
+
+  const redScale = d3.scaleSequential(d3.interpolateRgb('white', 'red'));
+  const blueScale = d3.scaleSequential(d3.interpolateRgb('white', 'blue'));
+
+  const opacityLegendDiv = mapDiv
+    .append('div')
+    .attr('class', 'opacityLegendDiv')
+  
+  const opacityDiv = opacityLegendDiv.append('div').attr('class', 'opacityDiv')
+  const redLegendCanvas = opacityDiv.append('canvas').attr('class', 'redLegendCanvas')
+  const blueLegendCanvas = opacityDiv.append('canvas').attr('class', 'blueLegendCanvas')
+
+  //Create SVG element and append map to the SVG
+  const yearSliderDiv = mapDiv
+    .append("div")
+    .attr("class", "yearSliderDiv");
+
+  // label for slider
+  const yearSliderLabel = mapDiv
+    .append('div')
+    .attr('class', 'yearSliderLabel')
+    .text('Election Year');
+  
+  // range for slider
+  const years = [new Date(2008, 0), new Date(2012, 0), new Date(2016, 0), new Date(2020, 0)]
+
+  // used for updating opacity and tooltip for selected election year
+  let selectedYear = years[0].getFullYear()
+
+  //console.log('years:', years)
+  const slider = d3.sliderHorizontal()
+    .min(d3.min(years))
+    .max(d3.max(years))
+    .width(1000)
+    .step(1000 * 60 * 60 * 24 * 366 * 4)
+    .tickFormat(d3.timeFormat('%Y'))
+    .tickValues(years)
+    .default(new Date(2008, 0))
+    .on('onchange', val => {
+      selectedYear = val.getFullYear()
+      update()
+    })
+
+  yearSliderDiv
+    .append('svg')
+    .attr('width', 1200)
+    .attr('height', 100)
+    .append('g') 
+    .attr('transform', 'translate(90,30)')
+    .call(slider);
+
+  let yearsObject = {}
+  let statePaths = null
+  let rateLabel = null
+  d3.csv("voter_data.csv").then( function(data) {
+    for ( let i = 0; i < data.length; ++i )
+    {
+      //console.log(data[i].election_year, ", ", data[i].state, ", ", data[i].elected_party)
+      let setYear = data[i].election_year
+      if ( yearsObject[setYear] === undefined )
+      {
+        yearsObject[setYear] = []
+      }
+      const stateData = {
+        name: data[i].state,
+        elected_party: data[i].elected_party,
+        total_votes: parseInt(data[i].total_votes.split(',').join('')),
+        early_or_absentee_votes: parseInt(data[i].early_or_absentee_votes.split(',').join(''))
+      }
+
+      yearsObject[setYear] = [...yearsObject[setYear], stateData]
+
+      if ( stateData.early_or_absentee_votes < min )
+      {
+        min = stateData.early_or_absentee_votes
+      }
+      if ( stateData.early_or_absentee_votes > max )
+      {
+        max = stateData.early_or_absentee_votes
+      }
+    }
+    
+    console.log('yearsObject:', yearsObject)
+    colorScale = [min, max]
+
+    ramp(redScale, redLegendCanvas)
+    ramp(blueScale, blueLegendCanvas)
+    const opacityLegendLabel = opacityLegendDiv.append('div').attr('class', 'opacityLegendLabel')
+    const ratePoints = opacityLegendLabel.append('div').attr('class', 'ratePoints')
+    ratePoints.append('div').attr('class', 'ratePointLeft').text('0%')
+    ratePoints.append('div').attr('class', 'ratePointRight').text('100%')
+    rateLabel = opacityLegendLabel.append('div').attr('class', 'rateLabel').text('Rate of early votes in a state')
+  })
+
+  d3.json("us-states.json").then( function(json) {
+    // Bind the data to the SVG and create one path per GeoJSON feature
+    statePaths = mapSvg.selectAll("path")
+      .data(json.features)
+      .enter()
+      .append("path")
+      .attr("d", path)
+      .on('click', clicked)
+    update()
+  })
+
+  const toolTipDiv = d3.select('body')
+    .append('div')
+    .attr('class', 'toolTipDiv')
+    .style('opacity',  0)
+
+  
+  let hoveredState = null
+  function update() {
+    colorScale = [min, max]
+
+    // console.log('yearsObject[selectedYear]:',yearsObject[selectedYear])
+    statePaths
+      .style("fill", function(d) {
+        const searchResult = yearsObject[selectedYear].find(y => y.name === d.properties.name)
+        if ( searchResult )
+        {
+          if ( searchResult.elected_party === 'R' )
+          {
+            return redScale(1)
+          }
+          else if ( searchResult.elected_party === 'D' )
+          {
+            return blueScale(1)
+          }
+        }
+        return "rgb(200,200,200)"
+      })
+      .style("fill-opacity", function(d) {
+        const searchResult = yearsObject[selectedYear].find(y => y.name === d.properties.name)
+        if ( searchResult )
+        {
+          let opac = ( searchResult.early_or_absentee_votes / searchResult.total_votes )
+          return opac.toString()
+        }
+      })
+      .on("mousemove", function(d) {   
+        hoveredState = yearsObject[selectedYear].find(y => y.name === d.target.__data__.properties.name)
+        if ( hoveredState )
+        {
+          toolTipDiv
+            .style("opacity", .9)   
+            .html(`${d.target.__data__.properties.name} (${hoveredState.elected_party})` + 
+              '<br/>' + 
+              `${((hoveredState.early_or_absentee_votes/hoveredState.total_votes)*100).toFixed(2)}% voted early`)
+            .style("left", (d.pageX + 15) + "px")     
+            .style("top", (d.pageY -30) + "px");    
+        }
+	    })   
+      // fade out tooltip on mouse out               
+      .on("mouseout", function(d) {    
+        if ( hoveredState )
+        {
+          toolTipDiv.style("opacity", 0);  
+          toolTipDiv.html('')
+        }   
+      })
+  }
+
+  let active = d3.select(null);
+  function clicked(d) 
+  {
+    if (!d.target.__data__ || selectedYear !== 2020) return reset()
+
+    console.log(selectedYear)
+    let data = d.target.__data__
+
+    if (active.node() === this || (data.properties.name !== 'Georgia') ) return reset();
+    active.classed("active", false);
+    active = d3.select(this).classed("active", true);
+
+    yearSliderDiv.style('visibility', 'hidden')
+    yearSliderLabel.style('visibility', 'hidden')
+    colorLegendDiv.transition().style('right', '-10px').style('top', '275px')
+    opacityLegendDiv.transition().style('right', '-10px').style('bottom', '10px')
+    titleDiv.text('Early Voting in Georgia Senate Elections (2020)')
+    rateLabel.text('Rate of early votes in a county')
+
+    let centroid = path.centroid(data),
+      x = centroid[0]
+      y = centroid[1]
+      scale = 9
+      translate = [(width / 2) - x*(scale*.40), (height / 2) - y*(scale*.3)];
+
+    mapSvg.transition()
+      .duration(750)
+      .style("stroke-width", 1.5 / scale + "px")
+      .attr("transform", "translate(" + translate + ")scale(" + scale + ")");
+  }
+
+  function reset() {
+    console.log('resetting...')
+
+    yearSliderDiv.style('visibility', 'visible')
+    yearSliderLabel.style('visibility', 'visible')
+    colorLegendDiv.transition().style('right', '150px').style('top', '0px')
+    opacityLegendDiv.transition().style('right', '150px').style('bottom', '275px')
+    titleDiv.text('Early Voting Rates in US General Elections')
+    rateLabel.text('Rate of early votes in a state')
+
+    active.classed("active", false);
+    active = d3.select(null);
+
+    mapSvg.transition()
+      .duration(750)
+      .style("stroke-width", "1.5px")
+      .attr("transform", "");
+  }
+
+  function ramp(color, canvas, n = 256) {
+    canvas.attr('width', n).attr('height', '30px')
+    const context = canvas.node().getContext("2d");
+    for (let i = 0; i < n; ++i) {
+      context.fillStyle = color(i / (n - 1));
+      context.fillRect(i, 0, n, 10);
+    }
+  }
+</script>
+</body>
+</html>
