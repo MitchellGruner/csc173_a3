@@ -4,6 +4,7 @@
 <script src="https://d3js.org/d3.v6.min.js"></script>
 <script src="https://d3js.org/d3-geo.v2.min.js"></script>
 <script src="https://unpkg.com/d3-simple-slider"></script>
+<script src="https://unpkg.com/topojson@3"></script>
 <style type="text/css">
   .toolTipDiv {
     position: absolute;
@@ -13,9 +14,11 @@
     text-align: start;
   }
 
+  * {
+    font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+  }
   h1 {
     text-align: center;
-    font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
   }
 
   .mapDiv {
@@ -41,7 +44,6 @@
 
     align-items: center;
     justify-content: center;
-    font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
     margin-top: 15px;
 
     visibility: visible;
@@ -54,7 +56,6 @@
     align-items: center;
     justify-content: center;
     font-size: x-large;
-    font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
 
     visibility: visible;
   }
@@ -163,7 +164,46 @@
   .axis text,
   .slider text {
     font-size: 18px;
-  } 
+  }
+
+  .ga-county-boundary {
+    stroke-width: 0px;
+    fill-opacity: 0;
+
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+  .senateTitle
+  {
+    opacity: 0%;
+    position: absolute;
+    width: 600px;
+    grid-row: 4/5;
+  }
+
+  .senateTip {
+    position: relative;
+    bottom: 325px;
+    right: 290px;
+    font-weight: bold;
+    visibility: visible;
+  }
+
+  .rationale {
+    display: grid;
+    font-size: larger;
+    grid-template-columns: 250px 750px 250px;
+    justify-content: center;
+    margin: 250px 0px 250px 0px;
+  }
+
+  .rationale p {
+    text-indent: 2em;
+  }
+
+  .rationale .writing {
+    grid-column: 2/3;
+  }
 </style>
 </head>
 <body>
@@ -207,10 +247,6 @@
     .attr("width", width)
     .attr("height", height);
   
-  // used for color encoding
-  let min = Number.MAX_VALUE, max = Number.MIN_VALUE
-  let colorScale = [min, max]
-
   const redScale = d3.scaleSequential(d3.interpolateRgb('white', 'red'));
   const blueScale = d3.scaleSequential(d3.interpolateRgb('white', 'blue'));
 
@@ -264,6 +300,7 @@
   let yearsObject = {}
   let statePaths = null
   let rateLabel = null
+  let senateTip = null
   d3.csv("voter_data.csv").then( function(data) {
     for ( let i = 0; i < data.length; ++i )
     {
@@ -281,19 +318,9 @@
       }
 
       yearsObject[setYear] = [...yearsObject[setYear], stateData]
-
-      if ( stateData.early_or_absentee_votes < min )
-      {
-        min = stateData.early_or_absentee_votes
-      }
-      if ( stateData.early_or_absentee_votes > max )
-      {
-        max = stateData.early_or_absentee_votes
-      }
     }
     
     console.log('yearsObject:', yearsObject)
-    colorScale = [min, max]
 
     ramp(redScale, redLegendCanvas)
     ramp(blueScale, blueLegendCanvas)
@@ -302,28 +329,151 @@
     ratePoints.append('div').attr('class', 'ratePointLeft').text('0%')
     ratePoints.append('div').attr('class', 'ratePointRight').text('100%')
     rateLabel = opacityLegendLabel.append('div').attr('class', 'rateLabel').text('Rate of early votes in a state')
+
+    senateTitle = opacityLegendDiv.append('h1').text('Early Voting in the Georgia Senate Elections (2020)').attr('class', 'senateTitle')
+    senateTip = mapDiv.append('div').attr('class', 'senateTip').text('- Click for Georgia Senate Election results')
   })
 
   d3.json("us-states.json").then( function(json) {
+    //console.log(json)
     // Bind the data to the SVG and create one path per GeoJSON feature
-    statePaths = mapSvg.selectAll("path")
+    statePaths = mapSvg.append('g').selectAll("path")
       .data(json.features)
       .enter()
       .append("path")
       .attr("d", path)
+      .attr('id', d => {
+        if ( d.properties.name === 'Georgia' )
+        {
+          return 'GeorgiaPath'
+        }
+      })
       .on('click', clicked)
     update()
   })
+
+  let gaCountyPaths = null
+  let countyObjects = {}
+  d3.csv('ga_county_data.csv').then( countyData => {
+    d3.json("ga-counties.json").then( counties => {
+      gaCountyPaths = mapSvg.append('g')
+        .selectAll("path")
+        .data(topojson.feature(counties, counties.objects['georgia-counties']).features)
+        .enter()
+        .append('path')
+        .attr("d", path)
+        .attr('class', 'ga-county-boundary')
+        .style('fill', d => {
+          //console.log(d.properties.NAME)
+          for ( let c = 0; c < countyData.length; ++c )
+          {
+            if ( countyObjects[countyData[c].county] === undefined )
+            {
+              countyObjects[countyData[c].county] = {
+                early_votes: parseInt(countyData[c].early_votes),
+                total: parseInt(countyData[c].total),
+                elected_party: countyData[c].elected_party
+              }
+            }
+
+            if ( countyData[c].county === d.properties.NAME.toUpperCase() )
+            {
+              if ( countyData[c].elected_party === 'R')
+              {
+                return redScale(1)
+              }
+              else
+              {
+                return blueScale(1)
+              }
+            }
+          }
+        })
+        .on("mousemove", d => {   
+          const data = d.target.__data__
+          if ( data.properties.STATEFP === '13' && zoomedIn )
+          {
+            const countyName = data.properties.NAME.toUpperCase()
+            //console.log((((countyObjects[countyName].early_votes) / (countyObjects[countyName].total))*100).toFixed(2))
+            toolTipDiv
+              .style("opacity", .9)   
+              .html(`${data.properties.NAMELSAD} (${countyObjects[countyName].elected_party})` + 
+                '<br/>' + 
+                `${ (((countyObjects[countyName].early_votes) / (countyObjects[countyName].total))*100).toFixed(2) }% voted early`)
+              .style("left", (d.pageX + 15) + "px")     
+              .style("top", (d.pageY -30) + "px")  
+          }
+          else if  (data.properties.STATEFP === '13' && !zoomedIn )
+          {
+            hoveredState = yearsObject[selectedYear].find(s => s.name === 'Georgia')
+            toolTipDiv
+              .style("opacity", .9)   
+              .html(`${hoveredState.name} (${hoveredState.elected_party})` + 
+                '<br/>' + 
+                `${ (((hoveredState.early_or_absentee_votes) / (hoveredState.total_votes))*100).toFixed(2) }% voted early`)
+              .style("left", (d.pageX + 15) + "px")     
+              .style("top", (d.pageY -30) + "px")  
+          }
+	    }) 
+      .on('mouseover', d => {
+        if ( !zoomedIn && selectedYear === 2020 &&  d.target.__data__.properties.STATEFP === '13' )
+        {
+          d3.selectAll('#GeorgiaPath').style('stroke-width', '5px').style('stroke', 'yellow')
+        }
+        else if (zoomedIn)
+        {
+          d3.select('#GeorgiaPath').style('stroke-width', '0.05px').style('stroke', 'slategrey')
+        }
+      })     
+      // fade out tooltip on mouse out               
+      .on("mouseout", d => {    
+        if (  d.target.__data__.properties.STATEFP !== '13' || hoveredState )
+        {
+          toolTipDiv.style("opacity", 0);  
+          toolTipDiv.html('')
+        }
+        if ( !zoomedIn )
+        {
+          d3.select('#GeorgiaPath').style('stroke-width', '1px').style('stroke', 'slategrey')
+        }
+      })
+    })
+  })
+
+  function showGaCounties() {
+    //console.log('countyObjects:', countyObjects)
+    senateTitle.style('opacity', '1')
+    gaCountyPaths
+      .style('stroke-width', '0.1px')
+      .style('stroke', 'black')
+      .style('fill-opacity', d => {
+        const countyName = d.properties.NAME.toUpperCase()
+        const opacScale = parseInt(countyObjects[countyName].early_votes) / parseInt(countyObjects[countyName].total)
+        return (opacScale*1.5).toString()
+      })
+  }
+  function hideGaCounties() {
+    senateTitle.style('opacity', '0')
+    gaCountyPaths
+      .style('stroke-width', '0px')
+      .style('fill-opacity', '0')
+  }
 
   const toolTipDiv = d3.select('body')
     .append('div')
     .attr('class', 'toolTipDiv')
     .style('opacity',  0)
-
   
   let hoveredState = null
   function update() {
-    colorScale = [min, max]
+    if ( selectedYear === 2020 )
+    {
+      senateTip.style('visibility', 'visible')
+    }
+    else
+    {
+      senateTip.style('visibility', 'hidden')
+    }
 
     // console.log('yearsObject[selectedYear]:',yearsObject[selectedYear])
     statePaths
@@ -346,78 +496,94 @@
         const searchResult = yearsObject[selectedYear].find(y => y.name === d.properties.name)
         if ( searchResult )
         {
-          let opac = ( searchResult.early_or_absentee_votes / searchResult.total_votes )
+          const opac = ( searchResult.early_or_absentee_votes / searchResult.total_votes )
           return opac.toString()
         }
       })
-      .on("mousemove", function(d) {   
+      .on("mousemove", function(d) {
         hoveredState = yearsObject[selectedYear].find(y => y.name === d.target.__data__.properties.name)
         if ( hoveredState )
         {
           toolTipDiv
             .style("opacity", .9)   
-            .html(`${d.target.__data__.properties.name} (${hoveredState.elected_party})` + 
+            .html(`${hoveredState.name} (${hoveredState.elected_party})` + 
               '<br/>' + 
               `${((hoveredState.early_or_absentee_votes/hoveredState.total_votes)*100).toFixed(2)}% voted early`)
             .style("left", (d.pageX + 15) + "px")     
             .style("top", (d.pageY -30) + "px");    
         }
-	    })   
+	    })
       // fade out tooltip on mouse out               
-      .on("mouseout", function(d) {    
+      .on("mouseout", function(d) {
         if ( hoveredState )
         {
           toolTipDiv.style("opacity", 0);  
           toolTipDiv.html('')
-        }   
+        }
       })
   }
 
   let active = d3.select(null);
+  let zoomedIn = false
   function clicked(d) 
   {
-    if (!d.target.__data__ || selectedYear !== 2020) return reset()
+    zoomedIn = true
+    d = d.target.__data__
+    if (!d || active.node() === this || d.properties.STATEFP !== '13' || selectedYear !== 2020) return reset()
 
-    console.log(selectedYear)
-    let data = d.target.__data__
+    //console.log(selectedYear)
+    statePaths.style('fill', 'black').style('fill-opacity', '0').style('stroke-width', '0.05px')
+    showGaCounties()
 
-    if (active.node() === this || (data.properties.name !== 'Georgia') ) return reset();
     active.classed("active", false);
     active = d3.select(this).classed("active", true);
 
+    senateTip.style('visibility', 'hidden')
     yearSliderDiv.style('visibility', 'hidden')
     yearSliderLabel.style('visibility', 'hidden')
     colorLegendDiv.transition().style('right', '-10px').style('top', '275px')
     opacityLegendDiv.transition().style('right', '-10px').style('bottom', '10px')
-    titleDiv.text('Early Voting in Georgia Senate Elections (2020)')
+    titleDiv.style('visibility', 'hidden')
     rateLabel.text('Rate of early votes in a county')
 
-    let centroid = path.centroid(data),
+    let centroid = path.centroid(d),
       x = centroid[0]
       y = centroid[1]
-      scale = 9
+      scale = 6
       translate = [(width / 2) - x*(scale*.40), (height / 2) - y*(scale*.3)];
 
     mapSvg.transition()
+      .delay(100)
       .duration(750)
       .style("stroke-width", 1.5 / scale + "px")
       .attr("transform", "translate(" + translate + ")scale(" + scale + ")");
   }
 
   function reset() {
-    console.log('resetting...')
+    //console.log('resetting...')
+    statePaths.style('stroke-width', '1px')
+    update()
+    hideGaCounties()
+
+    if ( zoomedIn && selectedYear === 2020 )
+    {
+      senateTip.style('visibility', 'visible')
+    }
+
+    zoomedIn = false
 
     yearSliderDiv.style('visibility', 'visible')
     yearSliderLabel.style('visibility', 'visible')
     colorLegendDiv.transition().style('right', '150px').style('top', '0px')
     opacityLegendDiv.transition().style('right', '150px').style('bottom', '275px')
-    titleDiv.text('Early Voting Rates in US General Elections')
+    titleDiv.style('visibility', 'visible')
     rateLabel.text('Rate of early votes in a state')
 
     active.classed("active", false);
     active = d3.select(null);
 
     mapSvg.transition()
+      .delay(100)
       .duration(750)
       .style("stroke-width", "1.5px")
       .attr("transform", "");
@@ -432,5 +598,37 @@
     }
   }
 </script>
+<div class='rationale'>
+  <div class='writing'>
+    <h2>Rationale:</h2>
+    <p>
+      For my initial design choice, I knew I wanted to create an interactive mapping of each state that would easily convey the percentage of early voting and the result from a quick glance. 
+      I think I was able to achieve this goal as the intensity of each state's opacity represents how much early voting contributed to a state. 
+      The color of the state itself represents the majority party of that state. 
+      If the user wants more specific information, they could hover over the state to see the exact percentage of early votes, the state name, and the majority elected party. 
+      The legend also helps in being more descriptive about what the color and opacity means.
+    </p>
+  
+    <p>
+      Initially, I decided to only show the swing states, but I felt that the map was too empty and the dataset was insufficient to answer the question of how early voting affected the outcome. 
+      I had to gather more data for every state, but I think it provided a more informative and effective visualization to answer my questions. 
+      Some more difficulties I had were having to intensify some of the opacities to help with differentiating the amount of early voting per state which might not be accurate with the opacity legend.
+    </p>
+  
+    <p>
+      Since I was comfortable in D3 and was also curious about the effect of early voting on the Georgia Senate elections in 2020, I decided to do an extra interaction for Georgia in 2020.
+      I was able to add a click to zoom into seeing all the Georgia counties in the 2020 elections with the same interactive elements that were at the state level.
+    </p>
+  
+    <p>The project began with the difficult process of gathering data from each state since there is no real standardization of storing voter data. 
+      All of the datasets varied or were missing data, so I had to compile the final dataset out of wherever I could find the data. 
+      Building the visualization elements themselves with D3 was also time-consuming because it seems that the authors had transitioned D3 to be mainly used on ObservableHQ and I had to lookup older examples on bl.ocks.org. 
+      The ObservableHQ site used its own runtime, so I had to look for alternative javascript solutions that worked without needing ObservableHQ. 
+      In the end, I think that once I got the hang of D3 and found enough examples, it turned out to be easier than I thought. 
+      I spent roughly 50-60 hours overall on the project. 
+      Most of my time was spent creating the map with svg paths, creating the mouse events, and figuring out how to make things appear when I wanted them to.
+    </p>
+  </div>
+</div>
 </body>
 </html>
